@@ -1,0 +1,421 @@
+# Reusable GitHub Actions Workflow for TVD App Deployments
+# This workflow can be called from any TVD app repository
+#
+# Usage in your app's .github/workflows/deploy.yml:
+#
+# jobs:
+#   deploy:
+#     uses: tvdapp/deployment-scripts/.github/workflows/deploy-app.yml@main
+#     with:
+#       app-name: "my-app"
+#       app-type: "static-web"
+#       container-port: 8080
+#       host-port: 3000
+#     secrets: inherit
+
+name: Deploy TVD Application
+
+on:
+  workflow_call:
+    inputs:
+      # Required inputs
+      app-name:
+        description: 'Name of the application (container name)'
+        required: true
+        type: string
+      app-type:
+        description: 'Type of application (static-web, python-api, node-api, fullstack)'
+        required: true
+        type: string
+      
+      # Container configuration
+      container-port:
+        description: 'Port the app listens on inside container'
+        required: false
+        type: number
+        default: 8080
+      host-port:
+        description: 'Port exposed on host system'
+        required: false
+        type: number
+        default: 3000
+      health-endpoint:
+        description: 'Health check endpoint path'
+        required: false
+        type: string
+        default: '/health'
+      
+      # Resource configuration
+      memory-limit:
+        description: 'Memory limit (e.g., 128M, 1G)'
+        required: false
+        type: string
+        default: '128M'
+      cpu-limit:
+        description: 'CPU limit (e.g., 0.5 for 50% of one core)'
+        required: false
+        type: string
+        default: '0.5'
+      
+      # Deployment configuration
+      health-timeout:
+        description: 'Seconds to wait for health check'
+        required: false
+        type: number
+        default: 120
+      restart-policy:
+        description: 'Docker restart policy'
+        required: false
+        type: string
+        default: 'unless-stopped'
+      
+      # Advanced options
+      dockerfile-path:
+        description: 'Path to Dockerfile (relative to repository root)'
+        required: false
+        type: string
+        default: './Dockerfile'
+      build-context:
+        description: 'Docker build context path'
+        required: false
+        type: string
+        default: '.'
+      environment:
+        description: 'Environment variables (JSON format)'
+        required: false
+        type: string
+        default: '{}'
+      volumes:
+        description: 'Volume mounts (JSON array format)'
+        required: false
+        type: string
+        default: '[]'
+      labels:
+        description: 'Docker labels (JSON format)'
+        required: false
+        type: string
+        default: '{}'
+      
+      # Network and domain configuration
+      domain:
+        description: 'Public domain for Traefik (optional)'
+        required: false
+        type: string
+        default: ''
+      traefik-network:
+        description: 'Traefik network name'
+        required: false
+        type: string
+        default: 'traefik'
+      
+      # Cleanup configuration
+      keep-images:
+        description: 'Number of old images to keep'
+        required: false
+        type: number
+        default: 3
+
+jobs:
+  validate:
+    name: Validate Application
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Validate required files
+        run: |
+          echo "🔍 Validating application files for type: ${{ inputs.app-type }}"
+          
+          # Check for Dockerfile
+          if [[ ! -f "${{ inputs.dockerfile-path }}" ]]; then
+            echo "❌ Dockerfile not found at: ${{ inputs.dockerfile-path }}"
+            exit 1
+          fi
+          echo "✅ Dockerfile exists"
+          
+          # Type-specific validation
+          case "${{ inputs.app-type }}" in
+            "static-web")
+              if [[ ! -f "index.html" ]]; then
+                echo "❌ index.html missing for static-web app"
+                exit 1
+              fi
+              echo "✅ Static web files validated"
+              ;;
+            "python-api")
+              if [[ ! -f "requirements.txt" ]] && [[ ! -f "pyproject.toml" ]]; then
+                echo "❌ requirements.txt or pyproject.toml missing for Python app"
+                exit 1
+              fi
+              echo "✅ Python dependencies file found"
+              ;;
+            "node-api")
+              if [[ ! -f "package.json" ]]; then
+                echo "❌ package.json missing for Node.js app"
+                exit 1
+              fi
+              echo "✅ Node.js package.json found"
+              ;;
+            "fullstack")
+              echo "✅ Full-stack app validation (custom validation should be added per app)"
+              ;;
+            *)
+              echo "⚠️ Unknown app type: ${{ inputs.app-type }}, skipping specific validation"
+              ;;
+          esac
+
+      - name: Validate Docker build
+        run: |
+          echo "🐳 Testing Docker build..."
+          docker build -f "${{ inputs.dockerfile-path }}" -t "${{ inputs.app-name }}-test" "${{ inputs.build-context }}"
+          echo "✅ Docker build successful"
+          
+          # Clean up test image
+          docker rmi "${{ inputs.app-name }}-test" || true
+
+  deploy:
+    name: Deploy to Server
+    runs-on: self-hosted
+    needs: [validate]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up deployment variables
+        id: vars
+        run: |
+          IMAGE_NAME="${{ inputs.app-name }}-prod"
+          echo "image-name=$IMAGE_NAME" >> $GITHUB_OUTPUT
+          echo "container-name=${{ inputs.app-name }}" >> $GITHUB_OUTPUT
+          
+          # Parse JSON inputs safely
+          echo '${{ inputs.environment }}' > env.json
+          echo '${{ inputs.volumes }}' > volumes.json
+          echo '${{ inputs.labels }}' > labels.json
+          
+          echo "📋 Deployment configuration:"
+          echo "  App: ${{ inputs.app-name }}"
+          echo "  Type: ${{ inputs.app-type }}"
+          echo "  Image: $IMAGE_NAME"
+          echo "  Ports: ${{ inputs.host-port }} → ${{ inputs.container-port }}"
+          echo "  Health: ${{ inputs.health-endpoint }}"
+          echo "  Memory: ${{ inputs.memory-limit }}"
+          echo "  CPU: ${{ inputs.cpu-limit }}"
+
+      - name: Build Docker image
+        run: |
+          echo "🔨 Building Docker image: ${{ steps.vars.outputs.image-name }}:latest"
+          docker build \
+            -f "${{ inputs.dockerfile-path }}" \
+            -t "${{ steps.vars.outputs.image-name }}:latest" \
+            "${{ inputs.build-context }}"
+          echo "✅ Docker image built successfully"
+
+      - name: Stop and remove existing container
+        run: |
+          echo "🔍 Checking for existing container: ${{ steps.vars.outputs.container-name }}"
+          
+          if docker ps -a --format "table {{.Names}}" | grep -q "^${{ steps.vars.outputs.container-name }}$"; then
+            echo "⚠️ Existing container found, removing..."
+            docker stop "${{ steps.vars.outputs.container-name }}" 2>/dev/null || true
+            docker rm "${{ steps.vars.outputs.container-name }}" 2>/dev/null || true
+            echo "✅ Old container removed"
+          else
+            echo "ℹ️ No existing container found"
+          fi
+
+      - name: Prepare container arguments
+        id: container-args
+        run: |
+          # Build volume arguments
+          VOLUME_ARGS=""
+          if [[ -s volumes.json ]] && [[ "$(cat volumes.json)" != "[]" ]]; then
+            while IFS= read -r volume; do
+              source=$(echo "$volume" | jq -r '.source // empty')
+              target=$(echo "$volume" | jq -r '.target // empty')
+              readonly=$(echo "$volume" | jq -r '.read_only // false')
+              
+              if [[ -n "$source" && -n "$target" ]]; then
+                if [[ -e "$source" ]]; then
+                  mount_option=""
+                  if [[ "$readonly" == "true" ]]; then
+                    mount_option=":ro"
+                  fi
+                  VOLUME_ARGS="$VOLUME_ARGS -v ${source}:${target}${mount_option}"
+                  echo "📁 Volume: ${source}:${target}${mount_option}"
+                else
+                  echo "⚠️ Volume source not found: $source"
+                fi
+              fi
+            done < <(jq -c '.[]' volumes.json 2>/dev/null || echo "")
+          fi
+          echo "volume-args=$VOLUME_ARGS" >> $GITHUB_OUTPUT
+          
+          # Build label arguments
+          LABEL_ARGS=""
+          if [[ -s labels.json ]] && [[ "$(cat labels.json)" != "{}" ]]; then
+            while IFS= read -r label; do
+              key=$(echo "$label" | jq -r '.key')
+              value=$(echo "$label" | jq -r '.value')
+              if [[ -n "$key" && -n "$value" ]]; then
+                LABEL_ARGS="$LABEL_ARGS --label ${key}=${value}"
+                echo "🏷️ Label: ${key}=${value}"
+              fi
+            done < <(jq -r 'to_entries[] | {key: .key, value: .value}' labels.json 2>/dev/null || echo "")
+          fi
+          
+          # Add Traefik labels if domain is specified
+          if [[ -n "${{ inputs.domain }}" ]]; then
+            LABEL_ARGS="$LABEL_ARGS --label traefik.enable=true"
+            LABEL_ARGS="$LABEL_ARGS --label traefik.docker.network=${{ inputs.traefik-network }}"
+            LABEL_ARGS="$LABEL_ARGS --label traefik.http.routers.${{ inputs.app-name }}.rule=Host(\`${{ inputs.domain }}\`)"
+            LABEL_ARGS="$LABEL_ARGS --label traefik.http.routers.${{ inputs.app-name }}.entrypoints=websecure"
+            LABEL_ARGS="$LABEL_ARGS --label traefik.http.routers.${{ inputs.app-name }}.tls.certresolver=letsencrypt"
+            LABEL_ARGS="$LABEL_ARGS --label traefik.http.services.${{ inputs.app-name }}.loadbalancer.server.port=${{ inputs.container-port }}"
+            echo "🌐 Traefik configured for domain: ${{ inputs.domain }}"
+          fi
+          
+          echo "label-args=$LABEL_ARGS" >> $GITHUB_OUTPUT
+          
+          # Build environment arguments
+          ENV_ARGS=""
+          if [[ -s env.json ]] && [[ "$(cat env.json)" != "{}" ]]; then
+            while IFS= read -r env_var; do
+              key=$(echo "$env_var" | jq -r '.key')
+              value=$(echo "$env_var" | jq -r '.value')
+              if [[ -n "$key" && -n "$value" ]]; then
+                ENV_ARGS="$ENV_ARGS -e ${key}=${value}"
+                echo "🔧 Environment: ${key}=${value}"
+              fi
+            done < <(jq -r 'to_entries[] | {key: .key, value: .value}' env.json 2>/dev/null || echo "")
+          fi
+          echo "env-args=$ENV_ARGS" >> $GITHUB_OUTPUT
+
+      - name: Start new container
+        run: |
+          echo "🚀 Starting new container: ${{ steps.vars.outputs.container-name }}"
+          
+          # Build the docker run command
+          docker run -d \
+            --name "${{ steps.vars.outputs.container-name }}" \
+            --restart "${{ inputs.restart-policy }}" \
+            -p "${{ inputs.host-port }}:${{ inputs.container-port }}" \
+            --memory "${{ inputs.memory-limit }}" \
+            --cpus "${{ inputs.cpu-limit }}" \
+            --health-cmd="wget --no-verbose --tries=1 --spider http://localhost:${{ inputs.container-port }}${{ inputs.health-endpoint }} || exit 1" \
+            --health-interval=30s \
+            --health-timeout=10s \
+            --health-retries=3 \
+            --health-start-period=40s \
+            ${{ steps.container-args.outputs.volume-args }} \
+            ${{ steps.container-args.outputs.label-args }} \
+            ${{ steps.container-args.outputs.env-args }} \
+            "${{ steps.vars.outputs.image-name }}:latest"
+          
+          echo "✅ Container started successfully"
+
+      - name: Wait for container health
+        run: |
+          echo "⏳ Waiting for container to become healthy (timeout: ${{ inputs.health-timeout }}s)..."
+          
+          timeout "${{ inputs.health-timeout }}" bash -c '
+            while true; do
+              status=$(docker inspect --format="{{.State.Health.Status}}" "${{ steps.vars.outputs.container-name }}" 2>/dev/null || echo "unknown")
+              case $status in
+                "healthy")
+                  echo "✅ Container is healthy!"
+                  exit 0
+                  ;;
+                "unhealthy")
+                  echo "❌ Container is unhealthy!"
+                  exit 1
+                  ;;
+                "starting"|"unknown")
+                  echo "⌛ Container health: $status"
+                  sleep 5
+                  ;;
+                *)
+                  echo "⚠️ Unknown health status: $status"
+                  sleep 5
+                  ;;
+              esac
+            done
+          ' || {
+            echo "⚠️ Health check timeout"
+            HEALTH_STATUS=$(docker inspect --format="{{.State.Health.Status}}" "${{ steps.vars.outputs.container-name }}" 2>/dev/null || echo "unknown")
+            echo "Final health status: $HEALTH_STATUS"
+          }
+
+      - name: Test HTTP endpoint
+        run: |
+          echo "🌐 Testing HTTP endpoint: http://localhost:${{ inputs.host-port }}${{ inputs.health-endpoint }}"
+          
+          timeout 60 bash -c '
+            until curl -sf "http://localhost:${{ inputs.host-port }}${{ inputs.health-endpoint }}" >/dev/null 2>&1; do
+              echo "⌛ Waiting for HTTP response..."
+              sleep 3
+            done
+            echo "✅ HTTP endpoint is responding"
+          ' || echo "⚠️ HTTP endpoint test failed (container may still be starting)"
+
+      - name: Verify deployment
+        run: |
+          echo "🔍 Deployment verification:"
+          echo ""
+          echo "📊 Container Status:"
+          docker ps --filter name="${{ steps.vars.outputs.container-name }}" --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}" || echo "❌ No container found"
+          
+          echo ""
+          HEALTH_STATUS=$(docker inspect --format="{{.State.Health.Status}}" "${{ steps.vars.outputs.container-name }}" 2>/dev/null || echo "unknown")
+          echo "🏥 Health Status: $HEALTH_STATUS"
+          
+          echo ""
+          echo "🌐 Access Points:"
+          echo "   📱 Local: http://localhost:${{ inputs.host-port }}"
+          echo "   🏥 Health: http://localhost:${{ inputs.host-port }}${{ inputs.health-endpoint }}"
+          
+          if [[ -n "${{ inputs.domain }}" ]]; then
+            echo "   🌍 Public: https://${{ inputs.domain }}"
+          fi
+          
+          echo ""
+          if docker ps --filter name="${{ steps.vars.outputs.container-name }}" | grep -q "${{ steps.vars.outputs.container-name }}"; then
+            echo "🎉 Deployment completed successfully!"
+          else
+            echo "❌ Deployment failed - container not running"
+            exit 1
+          fi
+
+      - name: Cleanup old images
+        run: |
+          echo "🧹 Cleaning up old images (keeping latest ${{ inputs.keep-images }})..."
+          
+          # Keep only the latest N images
+          IMAGES_TO_REMOVE=$(docker images "${{ steps.vars.outputs.image-name }}" --format "table {{.ID}}\t{{.CreatedAt}}" | \
+                           tail -n +2 | \
+                           sort -k2 -r | \
+                           tail -n +$((${{ inputs.keep-images }} + 1)) | \
+                           awk '{print $1}')
+          
+          if [[ -n "$IMAGES_TO_REMOVE" ]]; then
+            echo "$IMAGES_TO_REMOVE" | xargs -r docker rmi 2>/dev/null || true
+            echo "✅ Old images cleaned up"
+          else
+            echo "ℹ️ No old images to clean up"
+          fi
+          
+          # Remove dangling images
+          DANGLING=$(docker images -f "dangling=true" -q)
+          if [[ -n "$DANGLING" ]]; then
+            echo "$DANGLING" | xargs -r docker rmi 2>/dev/null || true
+            echo "✅ Dangling images removed"
+          fi
+          
+          echo "🏁 Deployment pipeline completed successfully!"
+
+      # Clean up temporary files
+      - name: Cleanup
+        if: always()
+        run: |
+          rm -f env.json volumes.json labels.json
