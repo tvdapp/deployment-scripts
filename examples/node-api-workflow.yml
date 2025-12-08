@@ -1,0 +1,73 @@
+# Example workflow for Node.js API (like sheet-to-calendar backend)
+# Save as .github/workflows/deploy.yml in your Node.js app repository
+
+name: Deploy Node.js API
+
+on:
+  push:
+    branches: [ main, develop ]
+  workflow_dispatch:
+
+jobs:
+  deploy-production:
+    if: github.ref == 'refs/heads/main'
+    uses: tvdapp/deployment-scripts/.github/workflows/deploy-app.yml@main
+    with:
+      app-name: "sheet-calendar-api"
+      app-type: "node-api"
+      container-port: 3000
+      host-port: 3001
+      health-endpoint: "/health"
+      memory-limit: "256M"
+      cpu-limit: "0.5"
+      health-timeout: 120
+      domain: "api.sheet-calendar.tvdapp.nl"
+      traefik-network: "traefik"
+      environment: >-
+        {
+          "NODE_ENV": "production",
+          "PORT": "3000",
+          "DATABASE_URL": "${{ secrets.DATABASE_URL }}",
+          "GOOGLE_CREDENTIALS": "${{ secrets.GOOGLE_CREDENTIALS }}",
+          "TMDB_API_KEY": "${{ secrets.TMDB_API_KEY }}"
+        }
+      volumes: >-
+        [
+          {"source": "./secrets", "target": "/app/secrets", "read_only": true}
+        ]
+      labels: >-
+        {
+          "com.docker.compose.service": "api",
+          "app.version": "${{ github.sha }}"
+        }
+      keep-images: 3
+    secrets: inherit
+
+  deploy-staging:
+    if: github.ref == 'refs/heads/develop'
+    uses: tvdapp/deployment-scripts/.github/workflows/deploy-app.yml@main
+    with:
+      app-name: "sheet-calendar-api-staging"
+      app-type: "node-api"
+      container-port: 3000
+      host-port: 4001  # Different port for staging
+      health-endpoint: "/health"
+      memory-limit: "128M"
+      cpu-limit: "0.3"
+      health-timeout: 120
+      domain: "api-staging.sheet-calendar.tvdapp.nl"
+      traefik-network: "traefik"
+      environment: >-
+        {
+          "NODE_ENV": "development",
+          "PORT": "3000",
+          "DATABASE_URL": "${{ secrets.STAGING_DATABASE_URL }}",
+          "GOOGLE_CREDENTIALS": "${{ secrets.GOOGLE_CREDENTIALS }}",
+          "TMDB_API_KEY": "${{ secrets.TMDB_API_KEY }}"
+        }
+      volumes: >-
+        [
+          {"source": "./secrets", "target": "/app/secrets", "read_only": true}
+        ]
+      keep-images: 2
+    secrets: inherit

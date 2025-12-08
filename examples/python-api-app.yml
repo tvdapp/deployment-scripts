@@ -1,0 +1,74 @@
+# Example configuration for Python API applications
+# Like the Movie app, Flask APIs, FastAPI services, etc.
+
+app:
+  name: "movie-api"
+  type: "python-api"
+  description: "Movie night scheduling and calendar sync API"
+
+container:
+  base_image_type: "python"
+  port: 5000
+  host_port: 1339
+  health_endpoint: "/health"
+
+deployment:
+  strategy: "replace"
+  wait_for_health: true
+  health_timeout: 120
+  restart_policy: "unless-stopped"
+
+resources:
+  memory_limit: "256M"
+  memory_reservation: "128M"
+  cpu_limit: "0.5"
+  cpu_reservation: "0.1"
+
+security:
+  run_as_non_root: true
+  read_only_filesystem: false  # Python apps often need write access
+  no_new_privileges: true
+
+volumes:
+  - type: "bind"
+    source: "./auth"
+    target: "/app/auth"
+    read_only: true
+  - type: "bind"
+    source: "./config.json"
+    target: "/app/config.json"
+    read_only: true
+  - type: "bind"
+    source: "./logs"
+    target: "/app/logs"
+    read_only: false
+
+networks:
+  - name: "mystack_app-network"
+    external: true
+
+environment:
+  PYTHONPATH: "/app"
+  PYTHONUNBUFFERED: "1"
+  TZ: "Europe/Amsterdam"
+  LOG_LEVEL: "INFO"
+
+labels:
+  traefik.enable: "true"
+  traefik.docker.network: "mystack_app-network"
+  traefik.http.routers.movie-api.rule: "Host(`movie-api.tvdapp.nl`)"
+  traefik.http.routers.movie-api.entrypoints: "websecure"
+  traefik.http.routers.movie-api.tls.certresolver: "letsencrypt"
+  traefik.http.services.movie-api.loadbalancer.server.port: "5000"
+
+cleanup:
+  keep_images: 3
+  remove_unused: true
+
+# Custom health check for Python apps
+health:
+  command: "curl -f http://localhost:5000/health || python -c \"import requests; requests.get('http://localhost:5000/health', timeout=5)\""
+  interval: "30s"
+  timeout: "15s"
+  retries: 3
+  start_period: "60s"

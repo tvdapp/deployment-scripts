@@ -1,0 +1,69 @@
+# Example workflow for Movie app (Python API)
+# Save as .github/workflows/deploy.yml in the Movie app repository
+
+name: Deploy Movie API
+
+on:
+  push:
+    branches: [ main, develop ]
+  workflow_dispatch:
+
+jobs:
+  deploy-production:
+    if: github.ref == 'refs/heads/main'
+    uses: tvdapp/deployment-scripts/.github/workflows/deploy-app.yml@main
+    with:
+      app-name: "movie-api"
+      app-type: "python-api"
+      container-port: 5000
+      host-port: 1339
+      health-endpoint: "/health"
+      memory-limit: "256M"
+      cpu-limit: "0.5"
+      health-timeout: 180  # Python apps may take longer to start
+      domain: "movie.tvdapp.nl"
+      traefik-network: "mystack_app-network"
+      environment: >-
+        {
+          "PYTHONPATH": "/app",
+          "PYTHONUNBUFFERED": "1",
+          "TZ": "Europe/Amsterdam",
+          "LOG_LEVEL": "INFO"
+        }
+      volumes: >-
+        [
+          {"source": "./auth", "target": "/app/auth", "read_only": true},
+          {"source": "./config.json", "target": "/app/config.json", "read_only": true},
+          {"source": "./logs", "target": "/app/logs", "read_only": false}
+        ]
+      keep-images: 3
+    secrets: inherit
+
+  deploy-staging:
+    if: github.ref == 'refs/heads/develop'
+    uses: tvdapp/deployment-scripts/.github/workflows/deploy-app.yml@main
+    with:
+      app-name: "movie-api-staging"
+      app-type: "python-api"
+      container-port: 5000
+      host-port: 2339  # Different port for staging
+      health-endpoint: "/health"
+      memory-limit: "128M"
+      cpu-limit: "0.3"
+      health-timeout: 180
+      domain: "movie-staging.tvdapp.nl"
+      traefik-network: "mystack_app-network"
+      environment: >-
+        {
+          "PYTHONPATH": "/app",
+          "PYTHONUNBUFFERED": "1",
+          "TZ": "Europe/Amsterdam",
+          "LOG_LEVEL": "DEBUG"
+        }
+      volumes: >-
+        [
+          {"source": "./auth", "target": "/app/auth", "read_only": true},
+          {"source": "./config.json", "target": "/app/config.json", "read_only": true}
+        ]
+      keep-images: 2
+    secrets: inherit

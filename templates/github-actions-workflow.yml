@@ -1,0 +1,163 @@
+# GitHub Actions Workflow Template for TVD Apps
+# Copy this to .github/workflows/deploy.yml in your app repository
+
+name: Build and Deploy
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  # Validate files and configuration
+  validate:
+    name: Validate Application
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Validate deployment config
+        run: |
+          if [[ ! -f "deployment-config.yml" ]]; then
+            echo "❌ deployment-config.yml not found"
+            echo "💡 Download template: curl -O https://raw.githubusercontent.com/tvdapp/deployment-scripts/main/templates/deployment-config.yml"
+            exit 1
+          fi
+          
+          # Basic YAML syntax check
+          python -c "import yaml; yaml.safe_load(open('deployment-config.yml'))" || {
+            echo "❌ Invalid YAML in deployment-config.yml"
+            exit 1
+          }
+          
+          echo "✅ Deployment configuration is valid"
+
+      - name: Validate required files
+        run: |
+          # Check for Dockerfile
+          if [[ ! -f "Dockerfile" ]]; then
+            echo "❌ Dockerfile not found"
+            exit 1
+          fi
+          echo "✅ Dockerfile exists"
+          
+          # Check for app-specific files based on type
+          APP_TYPE=$(grep -E "^\s*type:" deployment-config.yml | sed -E 's/.*:\s*"?([^"]*)"?.*/\1/' | xargs)
+          
+          case "$APP_TYPE" in
+            "static-web")
+              test -f index.html && echo "✅ index.html exists" || (echo "❌ index.html missing for static-web app" && exit 1)
+              ;;
+            "python-api")
+              test -f requirements.txt && echo "✅ requirements.txt exists" || (echo "❌ requirements.txt missing for Python app" && exit 1)
+              ;;
+            "node-api")
+              test -f package.json && echo "✅ package.json exists" || (echo "❌ package.json missing for Node.js app" && exit 1)
+              ;;
+          esac
+
+      # Optional: Run tests if they exist
+      - name: Run tests (if available)
+        run: |
+          if [[ -f "package.json" ]] && grep -q "\"test\"" package.json; then
+            npm ci && npm test
+          elif [[ -f "requirements.txt" ]] && [[ -f "test_*.py" || -d "tests" ]]; then
+            pip install -r requirements.txt
+            python -m pytest || python -m unittest discover || echo "⚠️ No test runner found"
+          else
+            echo "ℹ️ No tests found, skipping"
+          fi
+
+  # Deploy to self-hosted runner (production)
+  deploy:
+    name: Deploy to Server
+    runs-on: self-hosted
+    needs: [validate]
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download deployment script
+        run: |
+          curl -sL -o deploy.sh https://raw.githubusercontent.com/tvdapp/deployment-scripts/main/deploy.sh
+          chmod +x deploy.sh
+
+      - name: Deploy application
+        run: |
+          ./deploy.sh
+
+      - name: Post-deployment verification
+        run: |
+          # Get app name from config
+          APP_NAME=$(grep -E "^\s*name:" deployment-config.yml | sed -E 's/.*:\s*"?([^"]*)"?.*/\1/' | xargs)
+          HOST_PORT=$(grep -E "^\s*host_port:" deployment-config.yml | sed -E 's/.*:\s*"?([^"]*)"?.*/\1/' | xargs)
+          HEALTH_ENDPOINT=$(grep -E "^\s*health_endpoint:" deployment-config.yml | sed -E 's/.*:\s*"?([^"]*)"?.*/\1/' | xargs)
+          
+          # Default values
+          APP_NAME="${APP_NAME:-$(basename $PWD)}"
+          HOST_PORT="${HOST_PORT:-3000}"
+          HEALTH_ENDPOINT="${HEALTH_ENDPOINT:-/health}"
+          
+          echo "🔍 Post-deployment verification:"
+          echo "  App: $APP_NAME"
+          echo "  Port: $HOST_PORT"
+          echo "  Health endpoint: $HEALTH_ENDPOINT"
+          echo ""
+          
+          # Wait a moment for container to fully start
+          sleep 5
+          
+          # Check container is running
+          if docker ps | grep -q "$APP_NAME"; then
+            echo "✅ Container is running"
+          else
+            echo "❌ Container is not running"
+            exit 1
+          fi
+          
+          # Test health endpoint
+          if curl -sf "http://localhost:${HOST_PORT}${HEALTH_ENDPOINT}" >/dev/null; then
+            echo "✅ Health endpoint is responding"
+          else
+            echo "⚠️ Health endpoint test failed (may still be starting)"
+          fi
+          
+          echo "🎉 Deployment verification completed!"
+
+  # Optional: Deploy to staging environment
+  deploy-staging:
+    name: Deploy to Staging
+    runs-on: self-hosted
+    needs: [validate]
+    if: github.ref == 'refs/heads/develop'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Create staging config
+        run: |
+          # Copy main config and modify for staging
+          cp deployment-config.yml deployment-config-staging.yml
+          
+          # Update app name for staging
+          sed -i 's/name: "\([^"]*\)"/name: "\1-staging"/' deployment-config-staging.yml
+          
+          # Update port for staging (add 1000 to avoid conflicts)
+          HOST_PORT=$(grep -E "^\s*host_port:" deployment-config-staging.yml | sed -E 's/.*:\s*([0-9]+).*/\1/')
+          STAGING_PORT=$((HOST_PORT + 1000))
+          sed -i "s/host_port: $HOST_PORT/host_port: $STAGING_PORT/" deployment-config-staging.yml
+          
+          echo "📝 Staging configuration created with port $STAGING_PORT"
+
+      - name: Download deployment script
+        run: |
+          curl -sL -o deploy.sh https://raw.githubusercontent.com/tvdapp/deployment-scripts/main/deploy.sh
+          chmod +x deploy.sh
+
+      - name: Deploy to staging
+        run: |
+          ./deploy.sh --config deployment-config-staging.yml

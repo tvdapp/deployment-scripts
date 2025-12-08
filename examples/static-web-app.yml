@@ -1,0 +1,48 @@
+# Example configuration for static web applications
+# Like app-dashboard, documentation sites, SPAs, etc.
+
+app:
+  name: "my-dashboard"
+  type: "static-web"
+  description: "Static dashboard application"
+
+container:
+  base_image_type: "nginx"
+  port: 8080
+  host_port: 3000
+  health_endpoint: "/health"
+
+deployment:
+  strategy: "replace"
+  wait_for_health: true
+  health_timeout: 60
+  restart_policy: "unless-stopped"
+
+resources:
+  memory_limit: "64M"
+  memory_reservation: "32M"
+  cpu_limit: "0.2"
+  cpu_reservation: "0.05"
+
+security:
+  run_as_non_root: true
+  read_only_filesystem: true
+  no_new_privileges: true
+
+volumes:
+  - type: "bind"
+    source: "./config.json"
+    target: "/usr/share/nginx/html/config.json"
+    read_only: true
+
+labels:
+  traefik.enable: "true"
+  traefik.docker.network: "traefik"
+  traefik.http.routers.my-dashboard.rule: "Host(`dashboard.tvdapp.nl`)"
+  traefik.http.routers.my-dashboard.entrypoints: "websecure"
+  traefik.http.routers.my-dashboard.tls.certresolver: "letsencrypt"
+  traefik.http.services.my-dashboard.loadbalancer.server.port: "8080"
+
+cleanup:
+  keep_images: 2
+  remove_unused: true

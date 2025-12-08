@@ -1,0 +1,73 @@
+# TVD App Deployment Configuration Template
+# Copy this file to your app directory and customize for your needs
+
+app:
+  name: "my-app"  # REQUIRED: Must match your container name
+  type: "static-web"  # REQUIRED: static-web, python-api, node-api, fullstack
+  description: "My awesome TVD application"
+
+container:
+  base_image_type: "nginx"  # nginx, python, node, custom
+  custom_dockerfile: false  # set to true if using custom Dockerfile
+  port: 8080  # Port your app listens on inside container
+  host_port: 3000  # Port exposed on host system
+  health_endpoint: "/health"  # Health check endpoint
+
+deployment:
+  strategy: "replace"  # replace, blue-green, rolling (replace is most stable)
+  wait_for_health: true  # Wait for health checks to pass
+  health_timeout: 120  # Seconds to wait for health check
+  restart_policy: "unless-stopped"  # Docker restart policy
+
+resources:
+  memory_limit: "128M"  # Maximum memory usage
+  memory_reservation: "64M"  # Reserved memory
+  cpu_limit: "0.5"  # Maximum CPU usage (0.5 = 50% of one core)
+  cpu_reservation: "0.1"  # Reserved CPU
+
+security:
+  run_as_non_root: true  # Run container as non-root user
+  read_only_filesystem: false  # Make root filesystem read-only (advanced)
+  no_new_privileges: true  # Prevent privilege escalation
+
+# Volume mounts (optional)
+volumes:
+  - type: "bind"
+    source: "./config.json"  # Source file/directory on host
+    target: "/usr/share/nginx/html/config.json"  # Target in container
+    read_only: true
+
+# Docker networks (optional)
+networks:
+  - name: "traefik"
+    external: true
+  - name: "internal"
+    driver: "bridge"
+    internal: true
+
+# Labels for reverse proxy and metadata (optional)
+labels:
+  traefik.enable: "true"
+  traefik.docker.network: "traefik"
+  traefik.http.routers.my-app.rule: "Host(`my-app.tvdapp.nl`)"
+  traefik.http.routers.my-app.entrypoints: "websecure"
+  traefik.http.routers.my-app.tls.certresolver: "letsencrypt"
+  traefik.http.services.my-app.loadbalancer.server.port: "8080"
+
+# Image cleanup settings
+cleanup:
+  keep_images: 3  # Number of old images to keep
+  remove_unused: true  # Remove dangling images
+
+# Environment variables (optional)
+environment:
+  NODE_ENV: "production"
+  API_URL: "https://api.tvdapp.nl"
+
+# Advanced: Health check customization (optional)
+health:
+  command: "wget --no-verbose --tries=1 --spider http://localhost:8080/health || exit 1"
+  interval: "30s"
+  timeout: "10s"
+  retries: 3
+  start_period: "40s"
