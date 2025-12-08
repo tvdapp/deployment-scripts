@@ -296,40 +296,19 @@ jobs:
         run: |
           echo "🚀 Starting new container: ${{ steps.vars.outputs.container-name }}"
           
-          # Build the docker run command with safe variable handling
-          DOCKER_CMD="docker run -d"
-          DOCKER_CMD="$DOCKER_CMD --name ${{ steps.vars.outputs.container-name }}"
-          DOCKER_CMD="$DOCKER_CMD --restart ${{ inputs.restart-policy }}"
-          DOCKER_CMD="$DOCKER_CMD -p ${{ inputs.host-port }}:${{ inputs.container-port }}"
-          DOCKER_CMD="$DOCKER_CMD --memory ${{ inputs.memory-limit }}"
-          DOCKER_CMD="$DOCKER_CMD --cpus ${{ inputs.cpu-limit }}"
-          DOCKER_CMD="$DOCKER_CMD --health-cmd=\"wget --no-verbose --tries=1 --spider http://localhost:${{ inputs.container-port }}${{ inputs.health-endpoint }} || exit 1\""
-          DOCKER_CMD="$DOCKER_CMD --health-interval=30s"
-          DOCKER_CMD="$DOCKER_CMD --health-timeout=10s"
-          DOCKER_CMD="$DOCKER_CMD --health-retries=3"
-          DOCKER_CMD="$DOCKER_CMD --health-start-period=40s"
-          
-          # Add optional arguments if they exist
-          VOLUME_ARGS="${{ steps.container-args.outputs.volume-args }}"
-          LABEL_ARGS="${{ steps.container-args.outputs.label-args }}"
-          ENV_ARGS="${{ steps.container-args.outputs.env-args }}"
-          
-          if [[ -n "$VOLUME_ARGS" ]]; then
-            DOCKER_CMD="$DOCKER_CMD $VOLUME_ARGS"
-          fi
-          
-          if [[ -n "$LABEL_ARGS" ]]; then
-            DOCKER_CMD="$DOCKER_CMD $LABEL_ARGS"
-          fi
-          
-          if [[ -n "$ENV_ARGS" ]]; then
-            DOCKER_CMD="$DOCKER_CMD $ENV_ARGS"
-          fi
-          
-          DOCKER_CMD="$DOCKER_CMD ${{ steps.vars.outputs.image-name }}:latest"
-          
-          echo "🔍 Running command: $DOCKER_CMD"
-          eval "$DOCKER_CMD"
+          # Simple, direct approach - replicate the working manual command
+          docker run -d \
+            --name "${{ steps.vars.outputs.container-name }}" \
+            --restart "${{ inputs.restart-policy }}" \
+            -p "${{ inputs.host-port }}:${{ inputs.container-port }}" \
+            --memory "${{ inputs.memory-limit }}" \
+            --cpus "${{ inputs.cpu-limit }}" \
+            --health-cmd="wget --no-verbose --tries=1 --spider http://localhost:${{ inputs.container-port }}${{ inputs.health-endpoint }} || exit 1" \
+            --health-interval=30s \
+            --health-timeout=10s \
+            --health-retries=3 \
+            --health-start-period=40s \
+            "${{ steps.vars.outputs.image-name }}:latest"
           
           echo "✅ Container started successfully"
 
