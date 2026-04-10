@@ -296,7 +296,6 @@ jobs:
         run: |
           echo "🚀 Starting new container: ${{ steps.vars.outputs.container-name }}"
           
-          # Simple, direct approach - replicate the working manual command
           docker run -d \
             --name "${{ steps.vars.outputs.container-name }}" \
             --restart "${{ inputs.restart-policy }}" \
@@ -308,8 +307,17 @@ jobs:
             --health-timeout=10s \
             --health-retries=3 \
             --health-start-period=40s \
+            ${{ steps.container-args.outputs.env-args }} \
+            ${{ steps.container-args.outputs.volume-args }} \
+            ${{ steps.container-args.outputs.label-args }} \
             "${{ steps.vars.outputs.image-name }}:latest"
-          
+
+          # Connect to Traefik network if domain is specified
+          if [[ -n "${{ inputs.domain }}" ]]; then
+            docker network connect "${{ inputs.traefik-network }}" "${{ steps.vars.outputs.container-name }}" 2>/dev/null || true
+            echo "🌐 Connected to Traefik network: ${{ inputs.traefik-network }}"
+          fi
+
           echo "✅ Container started successfully"
 
       - name: Wait for container health
