@@ -114,10 +114,6 @@ on:
         required: false
         type: number
         default: 3
-    secrets:
-      runtime-secrets:
-        description: 'JSON map of secret environment variables for container runtime'
-        required: false
 
 jobs:
   validate:
@@ -295,27 +291,21 @@ jobs:
             done < <(jq -r 'to_entries[] | {key: .key, value: .value}' env.json 2>/dev/null || echo "")
           fi
 
-          # Build secret environment arguments
-          RUNTIME_SECRETS='${{ secrets.runtime-secrets }}'
-          if [[ -n "$RUNTIME_SECRETS" && "$RUNTIME_SECRETS" != "" ]]; then
-            echo "$RUNTIME_SECRETS" > secret-env.json
-            while IFS= read -r env_var; do
-              key=$(echo "$env_var" | jq -r '.key')
-              value=$(echo "$env_var" | jq -r '.value')
-              if [[ -n "$key" && -n "$value" ]]; then
-                ENV_ARGS="$ENV_ARGS -e ${key}=${value}"
-                echo "🔐 Secret environment: ${key}=***"
-              fi
-            done < <(jq -r 'to_entries[] | {key: .key, value: .value}' secret-env.json 2>/dev/null || echo "")
-            rm -f secret-env.json
-          fi
-
           echo "env-args=$ENV_ARGS" >> $GITHUB_OUTPUT
 
       - name: Start new container
+        env:
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
         run: |
           echo "🚀 Starting new container: ${{ steps.vars.outputs.container-name }}"
-          
+
+          # Forward inherited secrets as container env vars
+          SECRET_ENV_ARGS=""
+          if [[ -n "$SUPABASE_SERVICE_ROLE_KEY" ]]; then
+            SECRET_ENV_ARGS="$SECRET_ENV_ARGS -e SUPABASE_SERVICE_ROLE_KEY=$SUPABASE_SERVICE_ROLE_KEY"
+            echo "🔐 Forwarding secret: SUPABASE_SERVICE_ROLE_KEY"
+          fi
+
           docker run -d \
             --name "${{ steps.vars.outputs.container-name }}" \
             --restart "${{ inputs.restart-policy }}" \
@@ -330,6 +320,7 @@ jobs:
             ${{ steps.container-args.outputs.env-args }} \
             ${{ steps.container-args.outputs.volume-args }} \
             ${{ steps.container-args.outputs.label-args }} \
+            $SECRET_ENV_ARGS \
             "${{ steps.vars.outputs.image-name }}:latest"
 
           # Connect to Traefik network if domain is specified
