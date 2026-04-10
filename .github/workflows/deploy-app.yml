@@ -225,86 +225,37 @@ jobs:
             echo "ℹ️ No existing container found"
           fi
 
-      - name: Prepare container arguments
-        id: container-args
-        run: |
-          # Build volume arguments
-          VOLUME_ARGS=""
-          if [[ -s volumes.json ]] && [[ "$(cat volumes.json)" != "[]" ]]; then
-            while IFS= read -r volume; do
-              source=$(echo "$volume" | jq -r '.source // empty')
-              target=$(echo "$volume" | jq -r '.target // empty')
-              readonly=$(echo "$volume" | jq -r '.read_only // false')
-              
-              if [[ -n "$source" && -n "$target" ]]; then
-                if [[ -e "$source" ]]; then
-                  mount_option=""
-                  if [[ "$readonly" == "true" ]]; then
-                    mount_option=":ro"
-                  fi
-                  VOLUME_ARGS="$VOLUME_ARGS -v ${source}:${target}${mount_option}"
-                  echo "📁 Volume: ${source}:${target}${mount_option}"
-                else
-                  echo "⚠️ Volume source not found: $source"
-                fi
-              fi
-            done < <(jq -c '.[]' volumes.json 2>/dev/null || echo "")
-          fi
-          echo "volume-args=$VOLUME_ARGS" >> $GITHUB_OUTPUT
-          
-          # Build label arguments
-          LABEL_ARGS=""
-          if [[ -s labels.json ]] && [[ "$(cat labels.json)" != "{}" ]]; then
-            while IFS= read -r label; do
-              key=$(echo "$label" | jq -r '.key')
-              value=$(echo "$label" | jq -r '.value')
-              if [[ -n "$key" && -n "$value" ]]; then
-                LABEL_ARGS="$LABEL_ARGS --label ${key}=${value}"
-                echo "🏷️ Label: ${key}=${value}"
-              fi
-            done < <(jq -r 'to_entries[] | {key: .key, value: .value}' labels.json 2>/dev/null || echo "")
-          fi
-          
-          # Add Traefik labels if domain is specified
-          if [[ -n "${{ inputs.domain }}" ]]; then
-            LABEL_ARGS="$LABEL_ARGS --label traefik.enable=true"
-            LABEL_ARGS="$LABEL_ARGS --label traefik.docker.network=${{ inputs.traefik-network }}"
-            LABEL_ARGS="$LABEL_ARGS --label traefik.http.routers.${{ inputs.app-name }}.rule=Host(\`${{ inputs.domain }}\`)"
-            LABEL_ARGS="$LABEL_ARGS --label traefik.http.routers.${{ inputs.app-name }}.entrypoints=websecure"
-            LABEL_ARGS="$LABEL_ARGS --label traefik.http.routers.${{ inputs.app-name }}.tls.certresolver=letsencrypt"
-            LABEL_ARGS="$LABEL_ARGS --label traefik.http.services.${{ inputs.app-name }}.loadbalancer.server.port=${{ inputs.container-port }}"
-            echo "🌐 Traefik configured for domain: ${{ inputs.domain }}"
-          fi
-          
-          echo "label-args=$LABEL_ARGS" >> $GITHUB_OUTPUT
-          
-          # Build environment arguments
-          ENV_ARGS=""
-          if [[ -s env.json ]] && [[ "$(cat env.json)" != "{}" ]]; then
-            while IFS= read -r env_var; do
-              key=$(echo "$env_var" | jq -r '.key')
-              value=$(echo "$env_var" | jq -r '.value')
-              if [[ -n "$key" && -n "$value" ]]; then
-                ENV_ARGS="$ENV_ARGS -e ${key}=${value}"
-                echo "🔧 Environment: ${key}=${value}"
-              fi
-            done < <(jq -r 'to_entries[] | {key: .key, value: .value}' env.json 2>/dev/null || echo "")
-          fi
-
-          echo "env-args=$ENV_ARGS" >> $GITHUB_OUTPUT
-
-      - name: Start new container
+      - name: Prepare container files
         env:
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
         run: |
-          echo "🚀 Starting new container: ${{ steps.vars.outputs.container-name }}"
+          # Labels file
+          : > container-labels.txt
+          if [[ -n "${{ inputs.domain }}" ]]; then
+            cat >> container-labels.txt <<LABELS
+          traefik.enable=true
+          traefik.docker.network=${{ inputs.traefik-network }}
+          traefik.http.routers.${{ inputs.app-name }}.rule=Host(\`${{ inputs.domain }}\`)
+          traefik.http.routers.${{ inputs.app-name }}.entrypoints=websecure
+          traefik.http.routers.${{ inputs.app-name }}.tls.certresolver=letsencrypt
+          traefik.http.services.${{ inputs.app-name }}.loadbalancer.server.port=${{ inputs.container-port }}
+          LABELS
+            echo "🌐 Traefik configured for domain: ${{ inputs.domain }}"
+          fi
 
-          # Forward inherited secrets as container env vars
-          SECRET_ENV_ARGS=""
+          # Env file (secrets + custom env vars)
+          : > container-env.txt
           if [[ -n "$SUPABASE_SERVICE_ROLE_KEY" ]]; then
-            SECRET_ENV_ARGS="$SECRET_ENV_ARGS -e SUPABASE_SERVICE_ROLE_KEY=$SUPABASE_SERVICE_ROLE_KEY"
+            echo "SUPABASE_SERVICE_ROLE_KEY=$SUPABASE_SERVICE_ROLE_KEY" >> container-env.txt
             echo "🔐 Forwarding secret: SUPABASE_SERVICE_ROLE_KEY"
           fi
+          if [[ -s env.json ]] && [[ "$(cat env.json)" != "{}" ]]; then
+            jq -r 'to_entries[] | "\(.key)=\(.value)"' env.json >> container-env.txt 2>/dev/null || true
+          fi
+
+      - name: Start new container
+        run: |
+          echo "🚀 Starting new container: ${{ steps.vars.outputs.container-name }}"
 
           docker run -d \
             --name "${{ steps.vars.outputs.container-name }}" \
@@ -317,10 +268,8 @@ jobs:
             --health-timeout=10s \
             --health-retries=3 \
             --health-start-period=40s \
-            ${{ steps.container-args.outputs.env-args }} \
-            ${{ steps.container-args.outputs.volume-args }} \
-            ${{ steps.container-args.outputs.label-args }} \
-            $SECRET_ENV_ARGS \
+            --label-file container-labels.txt \
+            --env-file container-env.txt \
             "${{ steps.vars.outputs.image-name }}:latest"
 
           # Connect to Traefik network if domain is specified
@@ -434,4 +383,4 @@ jobs:
       - name: Cleanup
         if: always()
         run: |
-          rm -f env.json volumes.json labels.json
+          rm -f env.json volumes.json labels.json container-labels.txt container-env.txt
