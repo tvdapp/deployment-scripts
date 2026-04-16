@@ -95,6 +95,11 @@ on:
         required: false
         type: string
         default: '{}'
+      build-args:
+        description: 'Docker build args (multiline KEY=VALUE format)'
+        required: false
+        type: string
+        default: ''
       
       # Network and domain configuration
       domain:
@@ -168,7 +173,13 @@ jobs:
       - name: Validate Docker build
         run: |
           echo "🐳 Testing Docker build..."
-          docker build -f "${{ inputs.dockerfile-path }}" -t "${{ inputs.app-name }}-test" "${{ inputs.build-context }}"
+          BUILD_ARGS=""
+          if [[ -n "${{ inputs.build-args }}" ]]; then
+            while IFS= read -r line; do
+              [[ -n "$line" ]] && BUILD_ARGS="$BUILD_ARGS --build-arg $line"
+            done <<< "${{ inputs.build-args }}"
+          fi
+          docker build -f "${{ inputs.dockerfile-path }}" $BUILD_ARGS -t "${{ inputs.app-name }}-test" "${{ inputs.build-context }}"
           echo "✅ Docker build successful"
           
           # Clean up test image
@@ -206,8 +217,15 @@ jobs:
       - name: Build Docker image
         run: |
           echo "🔨 Building Docker image: ${{ steps.vars.outputs.image-name }}:latest"
+          BUILD_ARGS=""
+          if [[ -n "${{ inputs.build-args }}" ]]; then
+            while IFS= read -r line; do
+              [[ -n "$line" ]] && BUILD_ARGS="$BUILD_ARGS --build-arg $line"
+            done <<< "${{ inputs.build-args }}"
+          fi
           docker build \
             -f "${{ inputs.dockerfile-path }}" \
+            $BUILD_ARGS \
             -t "${{ steps.vars.outputs.image-name }}:latest" \
             "${{ inputs.build-context }}"
           echo "✅ Docker image built successfully"
