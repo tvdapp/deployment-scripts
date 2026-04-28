@@ -1,0 +1,22 @@
+services:
+  jellyfin:
+    image: jellyfin/jellyfin:latest
+    container_name: jellyfin
+    restart: unless-stopped
+    user: 1000:1000                # evt aanpassen, maar dit is meestal goed
+    ports:
+      - "8096:8096"
+    volumes:
+      - /etc/localtime:/etc/localtime:ro
+      - /home/thijsvandam/data/jellyfin/config:/config
+      - /home/thijsvandam/data/jellyfin/cache:/cache
+      - /home/thijsvandam/data/media:/media
+    environment:
+      - TZ=Europe/Amsterdam
+    networks:
+      - proxy
+
+networks:
+  proxy:
+    external: true
+

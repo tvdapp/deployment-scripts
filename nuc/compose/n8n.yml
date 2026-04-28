@@ -1,0 +1,21 @@
+services:
+  n8n:
+    image: docker.n8n.io/n8nio/n8n:latest
+    container_name: n8n
+    restart: unless-stopped
+    environment:
+      - TZ=Europe/Amsterdam
+      - N8N_HOST=localhost
+      - N8N_PORT=5678
+      - N8N_PROTOCOL=http
+      - NODE_ENV=production
+    ports:
+      - "5678:5678"
+    volumes:
+      - ./data:/home/node/.n8n
+    networks:
+      - proxy
+
+networks:
+  proxy:
+    external: true
