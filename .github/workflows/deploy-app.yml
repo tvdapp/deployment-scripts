@@ -246,6 +246,7 @@ jobs:
       - name: Prepare container files
         env:
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY || secrets.DEV_SUPABASE_SERVICE_ROLE_KEY }}
+          SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
         run: |
           # Labels file
           : > container-labels.txt
@@ -266,6 +267,10 @@ jobs:
           if [[ -n "$SUPABASE_SERVICE_ROLE_KEY" ]]; then
             echo "SUPABASE_SERVICE_ROLE_KEY=$SUPABASE_SERVICE_ROLE_KEY" >> container-env.txt
             echo "🔐 Forwarding secret: SUPABASE_SERVICE_ROLE_KEY"
+          fi
+          if [[ -n "$SENTRY_DSN" ]]; then
+            echo "SENTRY_DSN=$SENTRY_DSN" >> container-env.txt
+            echo "🔐 Forwarding secret: SENTRY_DSN"
           fi
           if [[ -s env.json ]] && [[ "$(cat env.json)" != "{}" ]]; then
             jq -r 'to_entries[] | "\(.key)=\(.value)"' env.json >> container-env.txt 2>/dev/null || true
