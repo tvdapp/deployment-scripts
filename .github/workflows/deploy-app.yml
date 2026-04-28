@@ -171,6 +171,11 @@ jobs:
           esac
 
       - name: Validate Docker build
+        env:
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          SENTRY_ORG: ${{ secrets.SENTRY_ORG }}
+          SENTRY_PROJECT: ${{ secrets.SENTRY_PROJECT }}
+          SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
         run: |
           echo "🐳 Testing Docker build..."
           BUILD_ARGS=""
@@ -179,6 +184,10 @@ jobs:
               [[ -n "$line" ]] && BUILD_ARGS="$BUILD_ARGS --build-arg $line"
             done <<< "${{ inputs.build-args }}"
           fi
+          [[ -n "$SENTRY_DSN" ]] && BUILD_ARGS="$BUILD_ARGS --build-arg NEXT_PUBLIC_SENTRY_DSN=$SENTRY_DSN"
+          [[ -n "$SENTRY_AUTH_TOKEN" ]] && BUILD_ARGS="$BUILD_ARGS --build-arg SENTRY_AUTH_TOKEN=$SENTRY_AUTH_TOKEN"
+          [[ -n "$SENTRY_ORG" ]] && BUILD_ARGS="$BUILD_ARGS --build-arg SENTRY_ORG=$SENTRY_ORG"
+          [[ -n "$SENTRY_PROJECT" ]] && BUILD_ARGS="$BUILD_ARGS --build-arg SENTRY_PROJECT=$SENTRY_PROJECT"
           docker build -f "${{ inputs.dockerfile-path }}" $BUILD_ARGS -t "${{ inputs.app-name }}-test" "${{ inputs.build-context }}"
           echo "✅ Docker build successful"
           
@@ -215,6 +224,11 @@ jobs:
           echo "  CPU: ${{ inputs.cpu-limit }}"
 
       - name: Build Docker image
+        env:
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          SENTRY_ORG: ${{ secrets.SENTRY_ORG }}
+          SENTRY_PROJECT: ${{ secrets.SENTRY_PROJECT }}
+          SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
         run: |
           echo "🔨 Building Docker image: ${{ steps.vars.outputs.image-name }}:latest"
           BUILD_ARGS=""
@@ -223,6 +237,11 @@ jobs:
               [[ -n "$line" ]] && BUILD_ARGS="$BUILD_ARGS --build-arg $line"
             done <<< "${{ inputs.build-args }}"
           fi
+          # Auto-forward Sentry build args from secrets
+          [[ -n "$SENTRY_DSN" ]] && BUILD_ARGS="$BUILD_ARGS --build-arg NEXT_PUBLIC_SENTRY_DSN=$SENTRY_DSN"
+          [[ -n "$SENTRY_AUTH_TOKEN" ]] && BUILD_ARGS="$BUILD_ARGS --build-arg SENTRY_AUTH_TOKEN=$SENTRY_AUTH_TOKEN"
+          [[ -n "$SENTRY_ORG" ]] && BUILD_ARGS="$BUILD_ARGS --build-arg SENTRY_ORG=$SENTRY_ORG"
+          [[ -n "$SENTRY_PROJECT" ]] && BUILD_ARGS="$BUILD_ARGS --build-arg SENTRY_PROJECT=$SENTRY_PROJECT"
           docker build \
             -f "${{ inputs.dockerfile-path }}" \
             $BUILD_ARGS \
