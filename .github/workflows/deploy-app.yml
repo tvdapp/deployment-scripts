@@ -27,7 +27,12 @@ on:
         description: 'Type of application (static-web, python-api, node-api, fullstack)'
         required: true
         type: string
-      
+      environment-tier:
+        description: 'Deployment tier — selects which secret namespace to use (dev → DEV_* secrets, prod → non-prefixed secrets)'
+        required: false
+        type: string
+        default: 'prod'
+
       # Container configuration
       container-port:
         description: 'Port the app listens on inside container'
@@ -264,7 +269,7 @@ jobs:
 
       - name: Prepare container files
         env:
-          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY || secrets.DEV_SUPABASE_SERVICE_ROLE_KEY }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ inputs.environment-tier == 'dev' && secrets.DEV_SUPABASE_SERVICE_ROLE_KEY || secrets.SUPABASE_SERVICE_ROLE_KEY }}
           SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
         run: |
           # Labels file
