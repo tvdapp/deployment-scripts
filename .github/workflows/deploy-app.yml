@@ -125,6 +125,13 @@ on:
         type: string
         default: ''
 
+      # Healthcheck override
+      use-image-healthcheck:
+        description: 'When true, omit `--health-cmd` / `--health-*` flags from `docker run` and let the image''s own HEALTHCHECK directive govern health probes. Use this for images that ship a custom HEALTHCHECK (e.g. a `python urllib` probe) and do NOT have `wget` installed — slim base images that strip wget will otherwise fail every probe with `/bin/sh: wget: not found`. Default false preserves the wget-based override for backward compatibility with apps that rely on it.'
+        required: false
+        type: boolean
+        default: false
+
       # Cleanup configuration
       keep-images:
         description: 'Number of old images to keep'
@@ -360,17 +367,32 @@ jobs:
             done < <(jq -c '.[]' volumes.json)
           fi
 
+          # Healthcheck flags. When `use-image-healthcheck: true` (caller opt-in),
+          # omit the --health-* override so Docker falls back to the image's own
+          # HEALTHCHECK directive (set in the Dockerfile). Use for slim images
+          # that ship a Python or otherwise wget-less healthcheck — the default
+          # override below would fail every probe with `wget: not found`.
+          HEALTH_FLAGS=()
+          if [[ "${{ inputs.use-image-healthcheck }}" != "true" ]]; then
+            HEALTH_FLAGS=(
+              --health-cmd "wget --no-verbose --tries=1 --spider http://127.0.0.1:${{ inputs.container-port }}${{ inputs.health-endpoint }} || exit 1"
+              --health-interval=30s
+              --health-timeout=10s
+              --health-retries=3
+              --health-start-period=40s
+            )
+            echo "🩺 Using deploy-app default wget-based healthcheck"
+          else
+            echo "🩺 use-image-healthcheck=true — relying on the image's own HEALTHCHECK directive"
+          fi
+
           docker run -d \
             --name "${{ steps.vars.outputs.container-name }}" \
             --restart "${{ inputs.restart-policy }}" \
             -p "${{ inputs.host-port }}:${{ inputs.container-port }}" \
             --memory "${{ inputs.memory-limit }}" \
             --cpus "${{ inputs.cpu-limit }}" \
-            --health-cmd="wget --no-verbose --tries=1 --spider http://127.0.0.1:${{ inputs.container-port }}${{ inputs.health-endpoint }} || exit 1" \
-            --health-interval=30s \
-            --health-timeout=10s \
-            --health-retries=3 \
-            --health-start-period=40s \
+            "${HEALTH_FLAGS[@]}" \
             --label-file container-labels.txt \
             --env-file container-env.txt \
             $VOLUME_ARGS \
