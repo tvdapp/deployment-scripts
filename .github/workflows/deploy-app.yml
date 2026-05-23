@@ -304,6 +304,29 @@ jobs:
         run: |
           echo "🚀 Starting new container: ${{ steps.vars.outputs.container-name }}"
 
+          # Translate the `volumes:` workflow input (JSON array of
+          # {source, target, read_only}) into `-v src:tgt[:ro]` docker flags.
+          # Mirrors the parse_volumes() logic in deploy.sh — the reusable
+          # workflow had been parsing the input but never applying it (the
+          # `volumes:` parameter was effectively a no-op until this block).
+          VOLUME_ARGS=""
+          if [[ -s volumes.json ]] && [[ "$(cat volumes.json)" != "[]" ]]; then
+            while IFS= read -r vol; do
+              [[ -z "$vol" ]] && continue
+              vsrc=$(echo "$vol" | jq -r '.source // empty')
+              vtgt=$(echo "$vol" | jq -r '.target // empty')
+              vro=$(echo "$vol" | jq -r '.read_only // false')
+              if [[ -z "$vsrc" ]] || [[ -z "$vtgt" ]]; then
+                echo "⚠️ Skipping malformed volume entry (missing source or target): $vol"
+                continue
+              fi
+              mount_opt=""
+              [[ "$vro" == "true" ]] && mount_opt=":ro"
+              VOLUME_ARGS="$VOLUME_ARGS -v ${vsrc}:${vtgt}${mount_opt}"
+              echo "📦 Volume: ${vsrc} → ${vtgt}${mount_opt}"
+            done < <(jq -c '.[]' volumes.json)
+          fi
+
           docker run -d \
             --name "${{ steps.vars.outputs.container-name }}" \
             --restart "${{ inputs.restart-policy }}" \
@@ -317,6 +340,7 @@ jobs:
             --health-start-period=40s \
             --label-file container-labels.txt \
             --env-file container-env.txt \
+            $VOLUME_ARGS \
             "${{ steps.vars.outputs.image-name }}:latest"
 
           # Connect to Traefik network if domain is specified
