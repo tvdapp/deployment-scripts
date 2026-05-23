@@ -118,6 +118,13 @@ on:
         type: string
         default: 'traefik'
       
+      # App-specific secret forwarding
+      app-secret-prefix:
+        description: 'Forward every repository secret whose name starts with this prefix as a container env var (the secret name IS the env var name). Lets per-app secrets live in GitHub without bespoke per-app code in this workflow — e.g. "MYAPP_" forwards MYAPP_DB_URL, MYAPP_API_KEY, etc. Empty (default) = no forwarding.'
+        required: false
+        type: string
+        default: ''
+
       # Cleanup configuration
       keep-images:
         description: 'Number of old images to keep'
@@ -271,6 +278,7 @@ jobs:
         env:
           SUPABASE_SERVICE_ROLE_KEY: ${{ inputs.environment-tier == 'dev' && secrets.DEV_SUPABASE_SERVICE_ROLE_KEY || secrets.SUPABASE_SERVICE_ROLE_KEY }}
           SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
+          ALL_SECRETS_JSON: ${{ toJSON(secrets) }}
         run: |
           # Labels file
           : > container-labels.txt
@@ -298,6 +306,31 @@ jobs:
           fi
           if [[ -s env.json ]] && [[ "$(cat env.json)" != "{}" ]]; then
             jq -r 'to_entries[] | "\(.key)=\(.value)"' env.json >> container-env.txt 2>/dev/null || true
+          fi
+
+          # Forward every secret whose name starts with `app-secret-prefix` as
+          # a container env var (secret name IS the env var name). Lets callers
+          # keep per-app secrets in their GitHub repo without bespoke per-app
+          # code in this reusable workflow. ${{ secrets.X }} cannot be used in
+          # `with:` arguments to reusable workflows (GitHub Actions limitation),
+          # so this resolution has to happen here, in a `run:` context that has
+          # access to `toJSON(secrets)`.
+          if [[ -n "${{ inputs.app-secret-prefix }}" ]]; then
+            FORWARDED_COUNT=$(echo "$ALL_SECRETS_JSON" | jq -r --arg p "${{ inputs.app-secret-prefix }}" '
+              to_entries
+              | map(select(.key | startswith($p)))
+              | length
+            ')
+            if [[ "$FORWARDED_COUNT" -gt 0 ]]; then
+              echo "$ALL_SECRETS_JSON" | jq -r --arg p "${{ inputs.app-secret-prefix }}" '
+                to_entries[]
+                | select(.key | startswith($p))
+                | "\(.key)=\(.value)"
+              ' >> container-env.txt
+              echo "🔐 Forwarded $FORWARDED_COUNT secret(s) matching prefix: ${{ inputs.app-secret-prefix }}"
+            else
+              echo "ℹ️ app-secret-prefix is set (${{ inputs.app-secret-prefix }}) but no secrets match it"
+            fi
           fi
 
       - name: Start new container
