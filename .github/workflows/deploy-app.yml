@@ -51,16 +51,18 @@ on:
         default: '/health'
       
       # Resource configuration
+      # Required on purpose. These were previously optional with a '128M'/'0.5'
+      # default, which silently starved every caller that did not set them --
+      # a non-crashing failure (healthchecks pass, latency rots). Every app
+      # must now state its own budget. See the resource-floor guard below.
       memory-limit:
-        description: 'Memory limit (e.g., 512M, 1G). NUC has 32G; 128M starves Node runtimes.'
-        required: false
+        description: 'Memory limit (e.g., 512M, 1G). Host has 32G.'
+        required: true
         type: string
-        default: '1G'
       cpu-limit:
-        description: 'CPU limit (e.g., 2 for two cores). NUC has 12 cores.'
-        required: false
+        description: 'CPU limit (e.g., 2 for two cores). Host has 12 cores.'
+        required: true
         type: string
-        default: '2'
       
       # Deployment configuration
       health-timeout:
@@ -146,6 +148,62 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+
+      - name: Validate resource budget
+        env:
+          MEM_LIMIT: ${{ inputs.memory-limit }}
+          CPU_LIMIT: ${{ inputs.cpu-limit }}
+          APP_TYPE: ${{ inputs.app-type }}
+        run: |
+          echo "🔍 Validating resource budget: ${MEM_LIMIT} memory, ${CPU_LIMIT} CPU"
+
+          # Normalise a docker-style size (128M, 1G, 91.16MiB, or bare bytes)
+          # to whole MiB. awk rather than bash ${v^^} so this does not depend
+          # on the runner's bash being >= 4.
+          to_mib() {
+            awk -v v="$1" 'BEGIN {
+              n = v; gsub(/[^0-9.]/, "", n)
+              u = v; gsub(/[0-9.[:space:]]/, "", u); u = toupper(u)
+              f["B"] = 1/1048576
+              f["K"] = 1/1024; f["KB"] = 1/1024; f["KIB"] = 1/1024
+              f["M"] = 1; f["MB"] = 1; f["MIB"] = 1
+              f["G"] = 1024; f["GB"] = 1024; f["GIB"] = 1024
+              if (n == "") { print 0; exit }
+              if (u == "") { printf "%d\n", n / 1048576; exit }
+              printf "%d\n", n * (u in f ? f[u] : 0)
+            }'
+          }
+
+          MEM_MIB=$(to_mib "$MEM_LIMIT")
+          if [[ "$MEM_MIB" -eq 0 ]]; then
+            echo "❌ Could not parse memory-limit '${MEM_LIMIT}'. Use a docker size like 512M or 1G."
+            exit 1
+          fi
+
+          # Floors are per runtime. A managed runtime with a JIT and a GC needs
+          # headroom for its heap *and* enough left over for the kernel to keep
+          # a page cache; at the cgroup limit the cache is evicted to ~0 and
+          # every code page is re-read from disk (see commit abc6085).
+          case "$APP_TYPE" in
+            node-api|nextjs|node) FLOOR=512 ;;
+            python-api)           FLOOR=512 ;;
+            static-web|static)    FLOOR=64  ;;
+            *)                    FLOOR=256 ;;
+          esac
+
+          if [[ "$MEM_MIB" -lt "$FLOOR" ]]; then
+            echo "❌ memory-limit ${MEM_LIMIT} (${MEM_MIB} MiB) is below the ${FLOOR} MiB floor for app-type '${APP_TYPE}'."
+            echo "   Raise it, or if this app genuinely runs in less, widen the floor here deliberately."
+            exit 1
+          fi
+
+          # 0.5 CPU throttles SSR/request bursts hard even when average use is
+          # near zero, so warn rather than pass silently.
+          if awk "BEGIN{exit !(${CPU_LIMIT} < 1)}"; then
+            echo "⚠️ cpu-limit ${CPU_LIMIT} is under one core -- request bursts will be throttled."
+          fi
+
+          echo "✅ Resource budget OK (floor for '${APP_TYPE}' is ${FLOOR} MiB)"
 
       - name: Validate required files
         run: |
@@ -478,6 +536,59 @@ jobs:
             exit 1
           fi
 
+      - name: Check resource headroom
+        env:
+          CONTAINER: ${{ steps.vars.outputs.container-name }}
+        run: |
+          echo "📏 Checking resource headroom for ${CONTAINER}..."
+
+          # Let the app settle so this measures a warm process, not boot.
+          sleep 20
+
+          # Normalise a docker-style size (128M, 1G, 91.16MiB, or bare bytes)
+          # to whole MiB. awk rather than bash ${v^^} so this does not depend
+          # on the runner's bash being >= 4.
+          to_mib() {
+            awk -v v="$1" 'BEGIN {
+              n = v; gsub(/[^0-9.]/, "", n)
+              u = v; gsub(/[0-9.[:space:]]/, "", u); u = toupper(u)
+              f["B"] = 1/1048576
+              f["K"] = 1/1024; f["KB"] = 1/1024; f["KIB"] = 1/1024
+              f["M"] = 1; f["MB"] = 1; f["MIB"] = 1
+              f["G"] = 1024; f["GB"] = 1024; f["GIB"] = 1024
+              if (n == "") { print 0; exit }
+              if (u == "") { printf "%d\n", n / 1048576; exit }
+              printf "%d\n", n * (u in f ? f[u] : 0)
+            }'
+          }
+
+          USAGE=$(docker stats --no-stream --format '{{.MemUsage}}' "$CONTAINER")
+          USED_MIB=$(to_mib "$(echo "$USAGE" | awk -F' / ' '{print $1}')")
+          LIMIT_MIB=$(to_mib "$(echo "$USAGE" | awk -F' / ' '{print $2}')")
+
+          echo "   Using ${USED_MIB} MiB of ${LIMIT_MIB} MiB"
+
+          if [[ "$LIMIT_MIB" -le 0 ]]; then
+            echo "ℹ️ No memory limit set -- nothing to check."
+            exit 0
+          fi
+
+          PCT=$(( USED_MIB * 100 / LIMIT_MIB ))
+          echo "   Headroom used: ${PCT}%"
+
+          # A warm container above 80% of its cap will evict its own page cache
+          # and degrade steadily over the days after a deploy, without ever
+          # crashing or failing a healthcheck. Surface it at deploy time.
+          if [[ "$PCT" -ge 90 ]]; then
+            echo "::error::${CONTAINER} is at ${PCT}% of its ${LIMIT_MIB} MiB limit right after deploy. Raise memory-limit -- it will thrash the page cache as traffic accrues."
+            exit 1
+          elif [[ "$PCT" -ge 80 ]]; then
+            echo "::warning::${CONTAINER} is at ${PCT}% of its ${LIMIT_MIB} MiB limit right after deploy. Consider raising memory-limit."
+          else
+            echo "✅ Healthy headroom (${PCT}% of limit)"
+          fi
+
+
       - name: Cleanup old images
         run: |
           echo "🧹 Cleaning up old images (keeping latest ${{ inputs.keep-images }})..."
@@ -502,6 +613,14 @@ jobs:
             echo "$DANGLING" | xargs -r docker rmi 2>/dev/null || true
             echo "✅ Dangling images removed"
           fi
+
+          # BuildKit's cache is a SEPARATE store -- docker rmi and
+          # `docker image prune` cannot reach it. Without this the cache grew
+          # unbounded to 182 GiB / 1410 entries over ~8 months on the NUC,
+          # while this cleanup step reported success every time. A weekly cron
+          # on the host backs this up in case deploys go quiet.
+          echo "🧹 Pruning BuildKit cache older than 7 days..."
+          docker builder prune --filter until=168h --force 2>/dev/null || true
           
           echo "🏁 Deployment pipeline completed successfully!"
 
