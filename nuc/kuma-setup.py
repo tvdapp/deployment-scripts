@@ -44,19 +44,22 @@ PUBLIC_HTTP = [
     ("Portainer",      "https://portainer.tvdapp.nl",                ALIVE_CODES),
 ]
 
-# Internal HTTP monitors — Kuma can't reach 'localhost' (that's itself);
-# use the NUC's static IP. Lauraway dev is here because its public URL has
-# a Cloudflare→origin TLS issue separate from the app
+# Internal HTTP monitors — Kuma can't reach 'localhost' (that's itself), so
+# these target the host via the docker0 gateway (172.17.0.1) rather than the
+# NUC's LAN address. They previously used the LAN IP and silently checked a
+# dead host for weeks after the network moved to 192.168.10.0/24; the gateway
+# address survives any future subnet change. Lauraway dev is here because its
+# public URL has a Cloudflare→origin TLS issue separate from the app
 INTERNAL_HTTP = [
     # name                       url                                            codes        interval
-    ("Lauraway dev (internal)",  "http://192.168.1.151:3004/api/health",        OK_CODES,    30),
-    ("Affine (internal)",        "http://192.168.1.151:3010",                   OK_CODES,    60),
-    ("ipcam-stream (internal)",  "http://192.168.1.151:8090",                   ALIVE_CODES, 60),
+    ("Lauraway dev (internal)",  "http://172.17.0.1:3004/api/health",        OK_CODES,    30),
+    ("Affine (internal)",        "http://172.17.0.1:3010",                   OK_CODES,    60),
+    ("ipcam-stream (internal)",  "http://172.17.0.1:8090",                   ALIVE_CODES, 60),
 ]
 
 INTERNAL_TCP = [
     # name              host             port  interval
-    ("MQTT (internal)", "192.168.1.151", 1883, 60),
+    ("MQTT (internal)", "172.17.0.1", 1883, 60),
 ]
 
 HEARTBEAT_NAME    = "NUC heartbeat"

@@ -1,6 +1,6 @@
 # Monitoring & Alerts
 
-UI: https://uptime.tvdapp.nl · LAN: `http://192.168.1.151:3001`
+UI: https://uptime.tvdapp.nl · LAN: `http://192.168.10.151:3001`
 
 ## Notifications
 

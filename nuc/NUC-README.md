@@ -6,7 +6,7 @@ This document provides a comprehensive overview of the NUC server setup for the 
 
 **Hardware**: Intel NUC  
 **OS**: Ubuntu Linux  
-**IP Address**: 192.168.1.151  
+**IP Address**: 192.168.10.151  
 **User**: thijsvandam  
 **SSH Access**: `ssh Tvdapp` (configured in SSH config)
 
@@ -183,9 +183,9 @@ http://localhost:5000  # health app
 
 ```bash
 # From local network
-http://192.168.1.151:3000  # app-dashboard
-http://192.168.1.151:4000  # Movie app
-http://192.168.1.151:5000  # health app
+http://192.168.10.151:3000  # app-dashboard
+http://192.168.10.151:4000  # Movie app
+http://192.168.10.151:5000  # health app
 ```
 
 ## 📊 Container Management
@@ -435,4 +435,4 @@ When deploying a new app:
 
 **Last Updated**: December 8, 2025  
 **Maintainer**: Thijs van Dam  
-**Server**: Intel NUC (192.168.1.151)
+**Server**: Intel NUC (192.168.10.151)
