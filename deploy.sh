@@ -141,9 +141,9 @@ load_config() {
     RESTART_POLICY=$(parse_config "deployment.restart_policy" "unless-stopped")
     
     # Resource configuration
-    MEMORY_LIMIT=$(parse_config "resources.memory_limit" "128M")
-    MEMORY_RESERVATION=$(parse_config "resources.memory_reservation" "64M")
-    CPU_LIMIT=$(parse_config "resources.cpu_limit" "0.5")
+    MEMORY_LIMIT=$(parse_config "resources.memory_limit" "1G")
+    MEMORY_RESERVATION=$(parse_config "resources.memory_reservation" "256M")
+    CPU_LIMIT=$(parse_config "resources.cpu_limit" "2")
     CPU_RESERVATION=$(parse_config "resources.cpu_reservation" "0.1")
     
     # Security configuration

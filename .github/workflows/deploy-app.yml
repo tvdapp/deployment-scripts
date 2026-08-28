@@ -52,15 +52,15 @@ on:
       
       # Resource configuration
       memory-limit:
-        description: 'Memory limit (e.g., 128M, 1G)'
+        description: 'Memory limit (e.g., 512M, 1G). NUC has 32G; 128M starves Node runtimes.'
         required: false
         type: string
-        default: '128M'
+        default: '1G'
       cpu-limit:
-        description: 'CPU limit (e.g., 0.5 for 50% of one core)'
+        description: 'CPU limit (e.g., 2 for two cores). NUC has 12 cores.'
         required: false
         type: string
-        default: '0.5'
+        default: '2'
       
       # Deployment configuration
       health-timeout:

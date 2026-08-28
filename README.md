@@ -69,9 +69,9 @@ deployment:
 ### Resource Limits
 ```yaml
 resources:
-  memory_limit: "128M"
-  memory_reservation: "64M" 
-  cpu_limit: "0.5"
+  memory_limit: "1G"
+  memory_reservation: "256M"
+  cpu_limit: "2"
   cpu_reservation: "0.1"
 ```
 
