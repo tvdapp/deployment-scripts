@@ -167,6 +167,23 @@ Located in `/app/data/movie/auth/`:
 
 ## 🌐 Network & Access
 
+### Host networking (LAN primary, Wi-Fi fallback)
+
+| Item | Setting | Why |
+|---|---|---|
+| LAN `enp114s0` | `192.168.10.151`, route metric 100 | Primary link |
+| Wi-Fi `wlo1` | SSID `Timmerdam2`, DHCP (`192.168.10.x`), metric 600 | Fallback only; config in `/etc/netplan/50-cloud-init.yaml` |
+| Docker DNS | `"dns": ["192.168.10.1", "1.1.1.1"]` in `/etc/docker/daemon.json` | Containers never inherit stale host DNS |
+| ARP | `/etc/sysctl.d/99-arp-lan-primary.conf`: `arp_ignore=1`, `arp_announce=2` | Both links share a subnet; without this, inbound traffic lands on Wi-Fi |
+
+Verify that inbound traffic arrives on the LAN (`enp` should get the bytes, `wlo1` ~0):
+
+```bash
+a=$(cat /sys/class/net/enp114s0/statistics/rx_bytes); b=$(cat /sys/class/net/wlo1/statistics/rx_bytes)
+curl -s -o /dev/null "https://speed.cloudflare.com/__down?bytes=20000000"
+echo "enp +$(( $(cat /sys/class/net/enp114s0/statistics/rx_bytes)-a ))  wlo1 +$(( $(cat /sys/class/net/wlo1/statistics/rx_bytes)-b ))"
+```
+
 ### Internal Access
 
 ```bash
@@ -294,6 +311,12 @@ sudo journalctl -f
    ```
 
 ### Application Issues
+
+0. **All containers unhealthy at once** → check DNS inside a container first:
+   ```bash
+   docker exec community nslookup mgqliwihupxwufudyilk.supabase.co
+   ```
+   If it fails, check `"dns"` in `/etc/docker/daemon.json`, then run `sudo systemctl restart docker` and restart the containers.
 
 1. **App not responding**:
    ```bash
@@ -430,9 +453,10 @@ When deploying a new app:
 - **2025-12-08**: Initial NUC setup with 3 deployed apps
 - **2025-12-08**: Standardized deployment framework implemented
 - **2025-12-08**: GitHub Actions runner configured as systemd service
+- **2026-10-11**: Prod down ~31h; containers couldn't resolve DNS because Docker forwarded to the dead `192.168.68.x` servers of the old Deco Wi-Fi. Pinned Docker DNS, moved Wi-Fi to `Timmerdam2`, and added an ARP sysctl so inbound traffic stays on the LAN
 
 ---
 
-**Last Updated**: December 8, 2025  
+**Last Updated**: October 11, 2026  
 **Maintainer**: Thijs van Dam  
 **Server**: Intel NUC (192.168.10.151)
